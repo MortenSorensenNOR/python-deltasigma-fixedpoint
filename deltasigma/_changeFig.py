@@ -103,12 +103,14 @@ def _setAxLinewidth(ax, linewidth=None, markersize=None, BW=False):
     """Take each Line2D in the axes, ax, and convert the line style
     Optionally also convert to BW, from http://tinyurl.com/qylqgoz
     """
-    LINES = [{'marker': None, 'dash': (None,None)},
-             {'marker': None, 'dash': [5,5]},
-             {'marker': None, 'dash': [5,3,1,3]},
-             {'marker': None, 'dash': [1,3]},
-             {'marker': None, 'dash': [5,2,5,2,5,10]},
-             {'marker': None, 'dash': [5,3,1,2,1,10]},
+    # matplotlib >= 3.6 rejects set_marker(None); use the string 'None' to
+    # explicitly request "no marker".
+    LINES = [{'marker': 'None', 'dash': (None,None)},
+             {'marker': 'None', 'dash': [5,5]},
+             {'marker': 'None', 'dash': [5,3,1,3]},
+             {'marker': 'None', 'dash': [1,3]},
+             {'marker': 'None', 'dash': [5,2,5,2,5,10]},
+             {'marker': 'None', 'dash': [5,3,1,2,1,10]},
              {'marker': 'o', 'dash': (None,None)}] #[1,2,1,10]}
     COLORMAP = {}
 

@@ -19,6 +19,7 @@ setup(
       'deltasigma': ['tests/test_data/*.mat', 'tests/test_data/*.txt']
     },
     install_requires=['numpy', 'scipy', 'matplotlib>=3.0.0'],
+    extras_require={'fixedpoint': ['fixedpoint>=1.0']},
     zip_safe=False,
     include_package_data=True,
     author="Giuseppe Venturini and others",

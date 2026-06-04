@@ -74,12 +74,18 @@ simulation_backends = {'CBLAS':(_simulateDSM_cblas is not None),
                        'Scipy_BLAS':(_simulateDSM_scipy_blas is not None),
                        'CPython':True}
 
-def simulateDSM(u, arg2, nlev=2, x0=0.):
+def simulateDSM(u, arg2, nlev=2, x0=0., fixedpoint=None):
     """Simulate a delta-sigma modulator.
 
     Compute the output of a general delta-sigma modulator with input ``u``,
     a structure described by ``ABCD``, an initial state ``x0`` (default zero) and
     a quantizer with a number of levels specified by ``nlev``.
+
+    Passing a :class:`~deltasigma.FixedPointConfig` as ``fixedpoint=`` switches
+    to a pure-Python backend that performs the inner-loop arithmetic in the
+    requested Q-format. This is intended for evaluating the SNR cost of a
+    fixed-point hardware implementation; it is significantly slower than the
+    default float backends, so use it for targeted runs, not large sweeps.
 
     **Syntax:**
 
@@ -203,6 +209,10 @@ def simulateDSM(u, arg2, nlev=2, x0=0.):
     Click on "Source" above to see the source code.
     """
     global warned
+    if fixedpoint is not None:
+        from ._simulateDSM_fixedpoint import simulateDSM as _simulateDSM_fixedpoint
+        return _simulateDSM_fixedpoint(u, arg2, nlev=nlev, x0=x0,
+                                       fixedpoint=fixedpoint)
     if _simulateDSM_cblas or _simulateDSM_scipy_blas:
         if not _is_zpk(arg2) and not isinstance(arg2, np.ndarray):
             arg2 = _get_zpk(arg2)

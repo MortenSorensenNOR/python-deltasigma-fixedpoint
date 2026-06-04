@@ -19,7 +19,7 @@
 from __future__ import division, print_function
 
 import unittest
-import pkg_resources
+import os
 import scipy.io
 import numpy as np
 import deltasigma as ds
@@ -36,7 +36,7 @@ class TestSimulateSNR(unittest.TestCase):
         """Test function for simulateSNR() 1/4"""
         # first test: f0 = 0
         # Load test references
-        fname = pkg_resources.resource_filename(__name__,
+        fname = os.path.join(os.path.dirname(__file__),
                                                 "test_data/test_snr_amp.mat")
         amp_ref = scipy.io.loadmat(fname)['amp'].reshape((-1,))
         snr_ref = scipy.io.loadmat(fname)['snr'].reshape((-1,))
@@ -90,7 +90,7 @@ class TestSimulateSNR(unittest.TestCase):
         """Test function for simulateSNR() 2/4"""
         # next test: f0 = 0
         # Load test references
-        fname = pkg_resources.resource_filename(__name__,
+        fname = os.path.join(os.path.dirname(__file__),
                                                 "test_data/test_snr_amp2.mat")
         amp_ref = scipy.io.loadmat(fname)['amp'].reshape((-1,))
         snr_ref = scipy.io.loadmat(fname)['snr'].reshape((-1,))
@@ -124,7 +124,7 @@ class TestSimulateSNR(unittest.TestCase):
     def test_simulateSNR_3(self):
         """Test function for simulateSNR() 3/4"""
         # next test: amp is a scalar
-        fname = pkg_resources.resource_filename(__name__,
+        fname = os.path.join(os.path.dirname(__file__),
                                                 "test_data/test_snr_amp2.mat")
         amp_ref = scipy.io.loadmat(fname)['amp'].reshape((-1,))[0]
         snr_ref = scipy.io.loadmat(fname)['snr'].reshape((-1,))[0]

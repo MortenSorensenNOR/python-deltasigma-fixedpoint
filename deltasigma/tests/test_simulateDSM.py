@@ -16,8 +16,8 @@
 """This module provides the test class for the simulateDSM() function.
 """
 
+import os
 import unittest
-import pkg_resources
 
 import numpy as np
 import deltasigma as ds
@@ -29,8 +29,8 @@ class TestSimulateDSM(unittest.TestCase):
     """Test class for simulateDSM()"""
 
     def setUp(self):
-        fname = pkg_resources.resource_filename(__name__,
-                "test_data/test_simulateDSM.mat")
+        fname = os.path.join(os.path.dirname(__file__),
+                "test_data", "test_simulateDSM.mat")
         self.v_ref = scipy.io.loadmat(fname)['v']
         self.xn_ref = scipy.io.loadmat(fname)['xn']
         self.xmax_ref = scipy.io.loadmat(fname)['xmax']

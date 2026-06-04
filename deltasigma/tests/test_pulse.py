@@ -17,7 +17,7 @@
 """
 
 import unittest
-import pkg_resources
+import os
 import numpy as np
 import scipy.io
 
@@ -33,7 +33,7 @@ class TestPulse(unittest.TestCase):
         self.H0 = ([1], [1, 2, 10])
         self.H1 = ([2], [1, 2, 10])
         self.H2 = ([3], [1, 2, 10])
-        fname = pkg_resources.resource_filename(__name__, "test_data/test_pulse.mat")
+        fname = os.path.join(os.path.dirname(__file__), "test_data/test_pulse.mat")
         self.pp2 = scipy.io.loadmat(fname)['pp']
 
     def test_pulse1(self):

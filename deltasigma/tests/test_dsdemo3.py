@@ -2,7 +2,7 @@ from __future__ import division
 import unittest
 import numpy as np
 import deltasigma as ds
-import pkg_resources
+import os
 import scipy as sp
 import scipy.io
 
@@ -27,7 +27,7 @@ import scipy.io
 class TestAxisLabels(unittest.TestCase):
     """dsdemo3: Delta sigma modulator synthesis"""
     def setUp(self):
-        fname = pkg_resources.resource_filename(__name__, "test_data/test_dsdemo3.mat")
+        fname = os.path.join(os.path.dirname(__file__), "test_data/test_dsdemo3.mat")
         self.data = sp.io.loadmat(fname)
     def test_dsdemo3(self):
         """dsdemo3 test: Delta sigma modulator synthesis"""

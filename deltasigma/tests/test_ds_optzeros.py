@@ -16,7 +16,7 @@
 import unittest
 import numpy as np
 import deltasigma as ds
-import pkg_resources
+import os
 import scipy.io
 from os.path import join
 
@@ -26,7 +26,7 @@ class TestDSOptZeros(unittest.TestCase):
 
     def setUp(self):
         file_path = join('test_data', 'test_ds_optzeros.mat')
-        fname = pkg_resources.resource_filename(__name__, file_path)
+        fname = os.path.join(os.path.dirname(__file__), file_path)
         self.res = scipy.io.loadmat(fname)['res']
 
     def test_opt_zeros(self):

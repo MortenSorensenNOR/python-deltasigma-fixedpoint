@@ -20,7 +20,8 @@ from __future__ import division
 
 import unittest
 import numpy as np
-import pkg_resources, scipy.io
+import os
+import scipy.io
 
 from numpy.fft import fft
 
@@ -62,7 +63,7 @@ class TestLogsmooth(unittest.TestCase):
         ### -1 is really important THIS IS NOT MATLAB!!
         fl, pl = logsmooth(spec0, fin - 1)
 
-        fname = pkg_resources.resource_filename(__name__,
+        fname = os.path.join(os.path.dirname(__file__),
                                                 "test_data/test_logsmooth.mat")
         data = scipy.io.loadmat(fname)
         self.assertTrue(np.allclose(fl, data['fl'], atol=1e-8, rtol=1e-5))

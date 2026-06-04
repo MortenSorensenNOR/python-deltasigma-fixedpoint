@@ -21,7 +21,16 @@ import sys
 from warnings import warn
 
 import numpy as np
-from numpy.distutils.system_info import get_info
+
+# numpy.distutils was removed on Python 3.12+ (and dropped entirely in numpy
+# 2.x). Fall back to an empty dict: the Cython extensions then take the
+# BLAS_H / educated-guess path below, and if that fails too the CPython
+# backend is used (with a runtime warning).
+try:
+    from numpy.distutils.system_info import get_info
+except ImportError:
+    def get_info(_name):
+        return {}
 
 # should synthesizeNTF run the optimization routine?
 optimize_NTF = True

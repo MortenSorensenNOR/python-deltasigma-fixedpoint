@@ -72,13 +72,17 @@ def lollipop(x, y, color=None, lw=2, ybot=0):
         warn('lollipop() got a non-zero ybot, but only ybot=0 is ' + \
              'supported. Setting ybot to 0.')
     
-    if (sys.version_info.minor <= 5):
-        markerline, stemlines, baseline = plt.stem(x, y, '-')
-    else:
-        markerline, stemlines, baseline = plt.stem(x, y, '-', use_line_collection=False)
+    # matplotlib >= 3.9 dropped the use_line_collection kwarg; the modern
+    # plt.stem always returns a Line2D-list for stemlines.
+    markerline, stemlines, baseline = plt.stem(x, y, '-')
     
     if not color or color == 'None':
-        color = stemlines[0].get_color()
+        # plt.stem returns a LineCollection for stemlines on modern matplotlib
+        # and a list of Line2D on older versions; handle both.
+        if hasattr(stemlines, 'get_colors'):
+            color = stemlines.get_colors()[0]
+        else:
+            color = stemlines[0].get_color()
     lolli_fmt = {'linewidth': lw, 'color': color}
     pop_fmt = {'mec': color, 'markerfacecolor':'None',  \
                'markersize':10, 'markeredgewidth': lw*1.1}

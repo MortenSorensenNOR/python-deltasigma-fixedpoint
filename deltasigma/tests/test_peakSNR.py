@@ -17,8 +17,7 @@
 """
 
 import unittest
-import pkg_resources
-
+import os
 import numpy as np
 import scipy.io
 
@@ -29,7 +28,7 @@ class TestPeakSNR(unittest.TestCase):
 
     def setUp(self):
         ds._peakSNR._debug = True
-        fname = pkg_resources.resource_filename(__name__, "test_data/test_peak_snr.mat")
+        fname = os.path.join(os.path.dirname(__file__), "test_data/test_peak_snr.mat")
         self.snr = scipy.io.loadmat(fname)['snr'].reshape((-1,))
         self.amp = scipy.io.loadmat(fname)['amp'].reshape((-1,))
         self.peak_snr, self.peak_amp = 76.612340603949761, -3.220409771005124

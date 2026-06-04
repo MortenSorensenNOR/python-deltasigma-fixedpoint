@@ -951,6 +951,7 @@ from ._evalF0 import evalF0
 from ._evalF1 import evalF1
 from ._evalMixedTF import evalMixedTF
 from ._evalRPoly import evalRPoly
+from ._fixedpoint_config import FixedPointConfig, QFormat
 from ._evalTF import evalTF
 from ._evalTFP import evalTFP
 from ._figureMagic import figureMagic

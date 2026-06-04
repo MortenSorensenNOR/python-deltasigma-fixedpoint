@@ -20,9 +20,7 @@ import unittest
 import numpy as np
 import deltasigma as ds
 import scipy.io
-import pkg_resources
-
-
+import os
 class TestBQuantize(unittest.TestCase):
     """Test class for bquantize()"""
     def setUp(self):
@@ -35,7 +33,7 @@ class TestBQuantize(unittest.TestCase):
         y = ds.bquantize(x)
         yval = [yi.val for yi in y]
         ycsd = [yi.csd for yi in y]
-        fname = pkg_resources.resource_filename(__name__, "test_data/test_bquantize.mat")
+        fname = os.path.join(os.path.dirname(__file__), "test_data/test_bquantize.mat")
         s = scipy.io.loadmat(fname)['s']
         mval = []
         mcsd = []
