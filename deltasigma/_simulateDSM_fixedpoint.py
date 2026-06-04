@@ -36,13 +36,25 @@ from scipy.signal import zpk2ss
 
 from ._ds_quantize import ds_quantize as _ds_quantize_float
 from ._fixedpoint_config import FixedPointConfig, to_fp
+from ._fixedpoint_constraints import _snap_to_constraint
 from ._utils import _get_zpk, carray
 
 
-def _coeff_matrix_to_fp(M, qfmt):
-    """Convert a 2D numpy coefficient matrix to a nested list of FixedPoints."""
-    return [[to_fp(M[r, c], qfmt) for c in range(M.shape[1])]
-            for r in range(M.shape[0])]
+def _coeff_matrix_to_fp(M, qfmt, matrix_name=None, cfg=None):
+    """Convert a 2D numpy coefficient matrix to a nested list of FixedPoints,
+    applying per-entry hardware-form constraints from ``cfg`` if given."""
+    rows = []
+    for r in range(M.shape[0]):
+        row = []
+        for c in range(M.shape[1]):
+            value = float(M[r, c])
+            if cfg is not None and matrix_name is not None:
+                constraint = cfg.constraint_for(matrix_name, r, c)
+                if constraint is not None:
+                    value = _snap_to_constraint(value, constraint, qfmt)
+            row.append(to_fp(value, qfmt))
+        rows.append(row)
+    return rows
 
 
 def _matvec_fp(M_fp, x_fp, target_qfmt):
@@ -94,7 +106,7 @@ def simulateDSM(u, arg2, nlev=2, x0=0., fixedpoint=None):
             "`fixedpoint=`; pass one or use the float backend instead."
         )
     cfg: FixedPointConfig = fixedpoint
-    out_qfmt = cfg.output_or_state
+    out_qfmt = cfg.y_or_state
 
     # --- argument normalisation: identical to _simulateDSM_python ---
     nlev = carray(nlev)
@@ -151,10 +163,11 @@ def simulateDSM(u, arg2, nlev=2, x0=0., fixedpoint=None):
     N = np.max(np.shape(u))
 
     # --- fixed-point conversion of coefficients and initial state ---
-    A_fp = _coeff_matrix_to_fp(np.real(A), cfg.coeff)
-    B_fp = _coeff_matrix_to_fp(np.real(B), cfg.coeff)
-    C_fp = _coeff_matrix_to_fp(np.real(C), cfg.coeff)
-    D1_fp = _coeff_matrix_to_fp(np.atleast_2d(np.real(D1)), cfg.coeff)
+    A_fp = _coeff_matrix_to_fp(np.real(A), cfg.coeff, "A", cfg)
+    B_fp = _coeff_matrix_to_fp(np.real(B), cfg.coeff, "B", cfg)
+    C_fp = _coeff_matrix_to_fp(np.real(C), cfg.coeff, "C", cfg)
+    D1_fp = _coeff_matrix_to_fp(np.atleast_2d(np.real(D1)),
+                                cfg.coeff, "D", cfg)
 
     x_fp = [to_fp(v, cfg.state) for v in x0]
 

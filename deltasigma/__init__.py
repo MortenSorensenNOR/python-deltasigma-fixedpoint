@@ -952,6 +952,8 @@ from ._evalF1 import evalF1
 from ._evalMixedTF import evalMixedTF
 from ._evalRPoly import evalRPoly
 from ._fixedpoint_config import FixedPointConfig, QFormat
+from ._constrain_compensation import constrain_with_compensation
+from ._fixedpoint_constraints import constrain_coefficients
 from ._evalTF import evalTF
 from ._evalTFP import evalTFP
 from ._figureMagic import figureMagic
