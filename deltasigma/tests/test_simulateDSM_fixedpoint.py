@@ -429,5 +429,149 @@ class TestCoeffConstraints(unittest.TestCase):
             msg="po2 constraint had no observable effect on the output")
 
 
+class TestZeroCircleMargin(unittest.TestCase):
+    """Tests for the zero_circle_margin enforcement in constrain_with_compensation."""
+
+    OSR = 32
+
+    def _build_crfb(self):
+        H = synthesizeNTF(5, self.OSR, 1)
+        a, g, b, c = realizeNTF(H, "CRFB")
+        b = np.concatenate(([b[0]], np.zeros(b.shape[0] - 1)))
+        ABCD = stuffABCD(a, g, b, c, form="CRFB")
+        ABCDs, _, _ = scaleABCD(ABCD, nlev=2, f=1.0 / (self.OSR * 4))
+        return mapABCD(ABCDs, form="CRFB")
+
+    def _build_crff(self):
+        H = synthesizeNTF(5, self.OSR, 1)
+        a, g, b, c = realizeNTF(H, "CRFF")
+        b = np.concatenate(([b[0]], np.zeros(b.shape[0] - 1)))
+        ABCD = stuffABCD(a, g, b, c, form="CRFF")
+        ABCDs, _, _ = scaleABCD(ABCD, nlev=2, f=1.0 / (self.OSR * 4))
+        return mapABCD(ABCDs, form="CRFF")
+
+    def _ntf_zero_mags(self, a, g, b, c, form):
+        ntf = calculateTF(stuffABCD(a, g, b, c, form=form))[0]
+        return np.abs(np.asarray(ntf[0]))
+
+    # -- normal operation: no warnings, zeros stay on unit circle ---------------
+
+    def test_crfb_normal_no_warning(self):
+        """Normal CRFB compensation with default margin produces no warnings."""
+        qf = QFormat(signed=True, m=4, n=20)
+        a, g, b, c = self._build_crfb()
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            a2, g2, b2, c2 = constrain_with_compensation(
+                a, g, b, c, "CRFB", qf, "po2", zero_circle_margin=0.0
+            )
+        mags = self._ntf_zero_mags(a2, g2, b2, c2, "CRFB")
+        self.assertTrue(np.all(mags <= 1.0 + 1e-10),
+            msg=f"Zeros outside unit circle after CRFB compensation: max|z|={np.max(mags):.10f}")
+
+    def test_crff_normal_no_warning(self):
+        """Normal CRFF compensation with default margin produces no warnings."""
+        qf = QFormat(signed=True, m=4, n=20)
+        a, g, b, c = self._build_crff()
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            a2, g2, b2, c2 = constrain_with_compensation(
+                a, g, b, c, "CRFF", qf, "po2", zero_circle_margin=0.0
+            )
+        mags = self._ntf_zero_mags(a2, g2, b2, c2, "CRFF")
+        self.assertTrue(np.all(mags <= 1.0 + 1e-10),
+            msg=f"Zeros outside unit circle after CRFF compensation: max|z|={np.max(mags):.10f}")
+
+    # -- g outside (0, 4): clamping kicks in -----------------------------------
+    # These tests call _enforce_zero_circle_margin directly so that compensation
+    # state-scaling (which can re-scale g back into range) does not obscure the
+    # enforcement logic.  The function is module-level and can be imported.
+
+    def _enforce(self, a, g, b, c, form, margin=0.0):
+        from deltasigma._constrain_compensation import _enforce_zero_circle_margin
+        qf = QFormat(signed=True, m=4, n=20)
+        import warnings
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = _enforce_zero_circle_margin(a, g, b, c, form, qf, margin)
+        return result, caught
+
+    def test_crfb_negative_g_clamped_and_warns(self):
+        """CRFB: g < 0 detected directly in _enforce_zero_circle_margin → clamped."""
+        a, g, b, c = self._build_crfb()
+        g_bad = g.copy()
+        g_bad[0] = -0.5  # negative → zeros go to real axis outside |z|=1
+        (a2, g2, b2, c2), caught = self._enforce(a, g_bad, b, c, "CRFB")
+        self.assertTrue(any("clamped" in str(w.message).lower() for w in caught),
+            msg="Expected a 'clamped' warning for g < 0")
+        self.assertGreater(g2[0], 0.0,
+            msg=f"g2[0] = {g2[0]} should be positive after clamping")
+
+    def test_crff_negative_g_clamped_and_warns(self):
+        """CRFF: g < 0 detected directly in _enforce_zero_circle_margin → clamped."""
+        a, g, b, c = self._build_crff()
+        g_bad = g.copy()
+        g_bad[0] = -0.3
+        (a2, g2, b2, c2), caught = self._enforce(a, g_bad, b, c, "CRFF")
+        self.assertTrue(any("clamped" in str(w.message).lower() for w in caught),
+            msg="Expected a 'clamped' warning for g < 0 (CRFF)")
+        self.assertGreater(g2[0], 0.0,
+            msg=f"g2[0] = {g2[0]} should be positive after clamping (CRFF)")
+
+    def test_crfb_g_above_4_clamped(self):
+        """CRFB: g >= 4 detected directly → clamped to < 4."""
+        a, g, b, c = self._build_crfb()
+        g_bad = g.copy()
+        g_bad[0] = 5.0  # above 4 → zeros go to real axis outside |z|=1
+        (a2, g2, b2, c2), caught = self._enforce(a, g_bad, b, c, "CRFB")
+        self.assertTrue(any("clamped" in str(w.message).lower() for w in caught),
+            msg="Expected a 'clamped' warning for g >= 4")
+        self.assertLess(g2[0], 4.0,
+            msg=f"g2[0] = {g2[0]} should be < 4 after clamping")
+
+    def test_crff_g_above_4_clamped(self):
+        """CRFF: g >= 4 detected directly → clamped to < 4."""
+        a, g, b, c = self._build_crff()
+        g_bad = g.copy()
+        g_bad[0] = 6.0
+        (a2, g2, b2, c2), caught = self._enforce(a, g_bad, b, c, "CRFF")
+        self.assertTrue(any("clamped" in str(w.message).lower() for w in caught),
+            msg="Expected a 'clamped' warning for g >= 4 (CRFF)")
+        self.assertLess(g2[0], 4.0,
+            msg=f"g2[0] = {g2[0]} should be < 4 after clamping (CRFF)")
+
+    # -- margin semantics ------------------------------------------------------
+
+    def test_positive_margin_tolerates_tiny_exceedance(self):
+        """A positive zero_circle_margin allows zeros just above |z|=1."""
+        qf = QFormat(signed=True, m=4, n=20)
+        a, g, b, c = self._build_crfb()
+        # With a generous margin, a mildly out-of-range g should not warn.
+        g_slightly_bad = g.copy()
+        g_slightly_bad[0] = 4.001  # barely over 4; zeros go very slightly outside
+        import warnings
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            constrain_with_compensation(
+                a, g_slightly_bad, b, c, "CRFB", qf, "po2",
+                zero_circle_margin=0.1,  # allow up to |z| = 1.1
+            )
+        clamped_warnings = [w for w in caught if "clamped" in str(w.message).lower()]
+        self.assertEqual(len(clamped_warnings), 0,
+            msg="margin=0.1 should tolerate zeros barely above |z|=1")
+
+    def test_zero_circle_margin_backward_compatible(self):
+        """Omitting zero_circle_margin (default 0.0) works for normal designs."""
+        qf = QFormat(signed=True, m=4, n=20)
+        a, g, b, c = self._build_crfb()
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            # Must not raise -- the default 0.0 should be fine for a well-formed design.
+            constrain_with_compensation(a, g, b, c, "CRFB", qf, "po2")
+
+
 if __name__ == "__main__":
     unittest.main()
