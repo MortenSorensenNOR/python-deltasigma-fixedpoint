@@ -39,21 +39,32 @@ their own derivation; calling this function with one raises
 
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Optional, Tuple
 from warnings import warn
 
 import numpy as np
 
-from ._fixedpoint_config import QFormat
+from ._fixedpoint_config import QFormat, _validate_constraint
 from ._fixedpoint_constraints import _snap_to_constraint
 
 
 def constrain_with_compensation(
     a, g, b, c, form: str, qfmt: QFormat,
-    constraint: str = "po2",
+    c_constraint: str = "po2",
+    a_constraint: Optional[str] = None,
+    b_constraint: Optional[str] = None,
+    g_constraint: Optional[str] = None,
     zero_circle_margin: float = 0.0,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Snap interstage gains to ``constraint`` and compensate via state scaling.
+    """Snap interstage gains and optionally other coefficients to hardware forms.
+
+    The interstage c-gains (``c[0..n-2]`` for CRFB, ``c[1..n-1]`` for CRFF)
+    are snapped to ``c_constraint`` and the resulting perturbation is absorbed
+    into the other coefficients via a state-scaling similarity transform, so
+    the NTF is preserved exactly.  Optionally, the remaining coefficient groups
+    (``a``, ``b[0..n-1]``, ``g``) can each be snapped to independent
+    constraints *after* compensation; these direct snaps do not preserve the
+    NTF but allow every coefficient group to target its own hardware form.
 
     Parameters
     ----------
@@ -66,23 +77,33 @@ def constrain_with_compensation(
         Modulator topology. ``"CRFB"`` or ``"CRFF"``.
     qfmt : QFormat
         Coefficient Q-format -- determines the representable range used by
-        the po2 / CSD snap. Typically pass ``FixedPointConfig.coeff`` here.
-    constraint : str
-        ``"po2"`` (default) or ``"csd:N"``. Applied to the interstage
-        gains only -- ``c[0..n-2]`` for CRFB, ``c[1..n-1]`` for CRFF. The
-        remaining ``c`` (output gain for CRFB, feedback DAC for CRFF) is
-        left unconstrained: forcing it has different physical meaning that
-        state-scaling cannot compensate for in a single similarity
-        transform.
+        all po2 / CSD snaps.  Typically pass ``FixedPointConfig.coeff`` here.
+    c_constraint : str
+        Constraint applied to the interstage gains via NTF-preserving state
+        scaling.  ``"po2"`` (default) or ``"csd:N"``.  Applied to
+        ``c[0..n-2]`` for CRFB, ``c[1..n-1]`` for CRFF; the remaining
+        ``c`` entry (output gain / feedback DAC) is left unconstrained.
+    a_constraint : str or None
+        Constraint applied directly to every ``a_i`` after compensation.
+        ``None`` (default) leaves ``a`` values as the exact compensation
+        result; ``"po2"`` or ``"csd:N"`` snaps them to the hardware grid.
+        This snap does **not** preserve the NTF.
+    b_constraint : str or None
+        Same as ``a_constraint`` but applied to ``b[0..n-1]`` (the
+        integrator input feed-in gains).  ``b[n]`` (direct feedthrough to
+        the quantizer input ``y``) is always left unconstrained.
+    g_constraint : str or None
+        Same as ``a_constraint`` but applied to every resonator coefficient
+        ``g_j``.  Runs before the ``zero_circle_margin`` check so that
+        quantised ``g`` values are subject to the unit-circle guard.
     zero_circle_margin : float
         Maximum allowed magnitude of any NTF zero beyond the unit circle.
-        After compensation, every NTF zero must satisfy
+        After all snaps, every NTF zero must satisfy
         ``|z| <= 1 + zero_circle_margin``.
 
         * ``0.0`` (default) -- strict unit-circle containment.  Float64
           arithmetic is accurate to ~1e-15, so false positives are
-          extremely unlikely for well-conditioned designs; raise to ``1e-10``
-          only if you observe spurious warnings.
+          extremely unlikely for well-conditioned designs.
         * Positive value (e.g. ``1e-6``) -- explicit floating-point
           tolerance when zero magnitudes land just above 1 due to numerical
           noise.
@@ -103,33 +124,41 @@ def constrain_with_compensation(
     Returns
     -------
     a_new, g_new, b_new, c_new : ndarray
-        Float64 topology coefficients. ``c_new[0..n-2]`` lie exactly on the
-        constraint grid; the other coefficients have absorbed the inverse
-        scalings. Feed these to :func:`stuffABCD` to get an ABCD matrix that,
-        once simulated in fixed-point, leaves the NTF zeros where you
-        designed them.
+        Float64 topology coefficients after compensation and any requested
+        direct snaps.  Feed these to :func:`stuffABCD` to get the hardware
+        ABCD matrix.
 
     Notes
     -----
-    The compensation is exact in real arithmetic. Once the resulting
-    coefficients are themselves Q-format-rounded by the simulation, sub-LSB
-    drift on ``a_i`` / ``b_i`` / ``g_j`` causes a residual NTF zero
-    perturbation -- that residual is what the fixed-point simulation will
-    legitimately reveal, in contrast to the gross NTF damage you would see
-    from naive (uncompensated) c-snapping.
+    Coefficient groups and their hardware roles (CRFB example):
 
-    The ``zero_circle_margin`` check operates on the float-valued compensated
-    coefficients, before any Q-format rounding.  The main scenario it catches
-    is a resonator coefficient ``g_j`` being pushed outside ``(0, 4)`` by a
-    large state-scaling factor -- which can happen when one ``c_i`` is much
-    larger than a neighbouring ``c_j``.  Q-format rounding in the simulator
-    can cause additional zero drift that this check does not cover.
+    * ``c_i`` -- interstage shift gains; snapping to po2/CSD costs only a
+      hard-wired shift per stage and preserves the NTF exactly (via
+      ``c_constraint``).
+    * ``a_i`` -- feedback DAC weights; may differ in wordlength from ``c``
+      but are general multipliers; use ``a_constraint`` to target a specific
+      grid.
+    * ``b_i`` -- input feed-in gains; often set to ``[b_0, 0, ..., 0, 1]``
+      for a single-feed design; use ``b_constraint`` if the nonzero entries
+      need to be hardware-friendly.
+    * ``g_j`` -- resonator coupling coefficients; small values that set zero
+      frequencies; use ``g_constraint`` with care -- the
+      ``zero_circle_margin`` guard will clamp any result that pushes zeros
+      outside the unit circle.
+
+    The ``c``-compensation is exact in real arithmetic.  The ``a``/``b``/
+    ``g`` direct snaps introduce additional NTF perturbation on top of any
+    Q-format rounding applied later by the simulator.
     """
     if form not in ("CRFB", "CRFF"):
         raise NotImplementedError(
             f"constrain_with_compensation supports form='CRFB' and 'CRFF'; "
             f"got form={form!r}."
         )
+    _validate_constraint(c_constraint, "c_constraint")
+    _validate_constraint(a_constraint, "a_constraint")
+    _validate_constraint(b_constraint, "b_constraint")
+    _validate_constraint(g_constraint, "g_constraint")
 
     a = np.asarray(a, dtype=np.float64).reshape(-1).copy()
     g = np.asarray(g, dtype=np.float64).reshape(-1).copy()
@@ -143,9 +172,26 @@ def constrain_with_compensation(
         raise ValueError(f"len(b)={b.shape[0]} must equal len(a)+1={n+1}")
 
     if form == "CRFB":
-        a_new, g_new, b_new, c_new = _compensate_CRFB(a, g, b, c, qfmt, constraint, n)
+        a_new, g_new, b_new, c_new = _compensate_CRFB(a, g, b, c, qfmt, c_constraint, n)
     else:
-        a_new, g_new, b_new, c_new = _compensate_CRFF(a, g, b, c, qfmt, constraint, n)
+        a_new, g_new, b_new, c_new = _compensate_CRFF(a, g, b, c, qfmt, c_constraint, n)
+
+    # Direct snaps for the remaining coefficient groups.  These run after
+    # c-compensation so they operate on the already-scaled values.
+    if a_constraint is not None:
+        a_new = np.array([_snap_to_constraint(float(v), a_constraint, qfmt)
+                          for v in a_new])
+
+    if b_constraint is not None:
+        b_new = b_new.copy()
+        b_new[:n] = np.array([_snap_to_constraint(float(v), b_constraint, qfmt)
+                               for v in b_new[:n]])
+
+    # g_constraint runs before zero_circle_margin so the guard sees the
+    # quantised g values.
+    if g_constraint is not None:
+        g_new = np.array([_snap_to_constraint(float(v), g_constraint, qfmt)
+                          for v in g_new])
 
     a_new, g_new, b_new, c_new = _enforce_zero_circle_margin(
         a_new, g_new, b_new, c_new, form, qfmt, zero_circle_margin
