@@ -51,6 +51,7 @@ from ._fixedpoint_constraints import _snap_to_constraint
 def constrain_with_compensation(
     a, g, b, c, form: str, qfmt: QFormat,
     constraint: str = "po2",
+    zero_circle_margin: float = 0.0,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Snap interstage gains to ``constraint`` and compensate via state scaling.
 
@@ -73,6 +74,31 @@ def constrain_with_compensation(
         left unconstrained: forcing it has different physical meaning that
         state-scaling cannot compensate for in a single similarity
         transform.
+    zero_circle_margin : float
+        Maximum allowed magnitude of any NTF zero beyond the unit circle.
+        After compensation, every NTF zero must satisfy
+        ``|z| <= 1 + zero_circle_margin``.
+
+        * ``0.0`` (default) -- strict unit-circle containment.  Float64
+          arithmetic is accurate to ~1e-15, so false positives are
+          extremely unlikely for well-conditioned designs; raise to ``1e-10``
+          only if you observe spurious warnings.
+        * Positive value (e.g. ``1e-6``) -- explicit floating-point
+          tolerance when zero magnitudes land just above 1 due to numerical
+          noise.
+        * Negative value (e.g. ``-0.05``) -- stricter than the unit circle;
+          requires zeros to sit at ``|z| <= 1 - 0.05``.  Note that for
+          ideal resonator coefficients ``g_j ∈ (0, 4)`` the zeros are
+          exactly on the unit circle (``|z| = 1``), so a negative margin
+          will always produce a warning for resonator-based designs.
+
+        When a violation is detected the function attempts to bring zeros
+        back inside the boundary by clamping any ``g_j`` that is outside
+        ``(0, 4)`` -- the range for which the resonator zeros lie exactly on
+        the unit circle.  If all ``g_j`` are already in ``(0, 4)`` and
+        zeros still violate the margin (caused by ``a``/``b``/``c``
+        coefficient interactions), a warning is issued but the coefficients
+        are returned unchanged.
 
     Returns
     -------
@@ -91,6 +117,13 @@ def constrain_with_compensation(
     perturbation -- that residual is what the fixed-point simulation will
     legitimately reveal, in contrast to the gross NTF damage you would see
     from naive (uncompensated) c-snapping.
+
+    The ``zero_circle_margin`` check operates on the float-valued compensated
+    coefficients, before any Q-format rounding.  The main scenario it catches
+    is a resonator coefficient ``g_j`` being pushed outside ``(0, 4)`` by a
+    large state-scaling factor -- which can happen when one ``c_i`` is much
+    larger than a neighbouring ``c_j``.  Q-format rounding in the simulator
+    can cause additional zero drift that this check does not cover.
     """
     if form not in ("CRFB", "CRFF"):
         raise NotImplementedError(
@@ -110,8 +143,14 @@ def constrain_with_compensation(
         raise ValueError(f"len(b)={b.shape[0]} must equal len(a)+1={n+1}")
 
     if form == "CRFB":
-        return _compensate_CRFB(a, g, b, c, qfmt, constraint, n)
-    return _compensate_CRFF(a, g, b, c, qfmt, constraint, n)
+        a_new, g_new, b_new, c_new = _compensate_CRFB(a, g, b, c, qfmt, constraint, n)
+    else:
+        a_new, g_new, b_new, c_new = _compensate_CRFF(a, g, b, c, qfmt, constraint, n)
+
+    a_new, g_new, b_new, c_new = _enforce_zero_circle_margin(
+        a_new, g_new, b_new, c_new, form, qfmt, zero_circle_margin
+    )
+    return a_new, g_new, b_new, c_new
 
 
 def _compensate_CRFB(a, g, b, c, qfmt, constraint, n):
@@ -203,3 +242,92 @@ def _scale_g_pairs(g, s, n):
         if col < n:
             g_new[j] = (s[row] / s[col]) * g[j]
     return g_new
+
+
+def _enforce_zero_circle_margin(
+    a: np.ndarray, g: np.ndarray, b: np.ndarray, c: np.ndarray,
+    form: str, qfmt: QFormat, margin: float,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Check NTF zeros and clamp g coefficients if any |z| > 1 + margin.
+
+    Resonator coefficients ``g_j ∈ (0, 4)`` place NTF zeros exactly on the
+    unit circle.  A large state-scaling factor can push ``g_j`` outside this
+    range after compensation; this helper detects that and clamps ``g_j``
+    back, warning the caller that exact NTF preservation no longer holds.
+
+    If all ``g_j`` are already in ``(0, 4)`` but zeros still exceed the
+    margin (due to ``a``/``b``/``c`` interactions), a warning is issued and
+    coefficients are returned unchanged.
+    """
+    from ._stuffABCD import stuffABCD
+
+    # NTF zeros = eigenvalues of the loop-filter state-transition matrix A.
+    # This holds because the NTF zeros are the poles of H_loop, and
+    # H_loop(z) = C(zI-A)^{-1}B + D has poles at the eigenvalues of A.
+    # Using eigvals avoids the polynomial round-trip in calculateTF which
+    # triggers scipy BadCoefficients warnings for clustered zeros (e.g. all
+    # NTF zeros at z=1 for LP designs) and is more numerically stable.
+    #
+    # A small float64 round-off floor (~4 ULPs at 1.0) prevents false
+    # positives when float arithmetic leaves eigenvalues at |z| = 1 ± 1e-15.
+    _fp_eps = 4e-15
+    threshold = 1.0 + margin + _fp_eps
+
+    n = len(a)
+    ABCD = stuffABCD(a, g, b, c, form=form)
+    A = ABCD[:n, :n]
+    ntf_zeros = np.linalg.eigvals(A)
+    mags = np.abs(ntf_zeros)
+
+    # Clamp g_j to the open interval (0, 4).  Within this range the isolated
+    # resonator zeros lie exactly on the unit circle; outside it they move to
+    # the real axis past |z|=1.  Cross-coupling between resonator sections in
+    # higher-order filters can mask the eigenvalue effect in the full A matrix,
+    # so we always check g values directly rather than relying on eigvals alone.
+    lsb = 2.0 ** (-qfmt.n)
+    g_new = g.copy()
+    clamped = []
+
+    for j in range(g_new.shape[0]):
+        old = float(g_new[j])
+        if g_new[j] <= 0.0:
+            g_new[j] = lsb
+        elif g_new[j] >= 4.0:
+            g_new[j] = 4.0 - lsb
+        if g_new[j] != old:
+            clamped.append(j)
+
+    if clamped:
+        warn(
+            f"constrain_with_compensation: g{clamped} outside (0, 4) after "
+            f"state-scaling compensation; clamped to keep NTF zeros within "
+            f"unit circle (zero_circle_margin={margin}). "
+            f"Exact NTF preservation no longer holds for these resonators.",
+            stacklevel=3,
+        )
+        ABCD2 = stuffABCD(a, g_new, b, c, form=form)
+        ntf_zeros2 = np.linalg.eigvals(ABCD2[:n, :n])
+        worst = float(np.max(np.abs(ntf_zeros2)))
+        if worst > threshold:
+            warn(
+                f"constrain_with_compensation: after g clamping, "
+                f"max |NTF zero| = {worst:.8g} still exceeds "
+                f"1 + margin = {1.0 + margin:.8g}. "
+                f"Residual violation is caused by a/b/c coefficient interactions.",
+                stacklevel=3,
+            )
+        return a, g_new, b, c
+
+    # All g in (0, 4).  Eigenvalue check for violations caused by a/b/c drift.
+    if not np.all(mags <= threshold):
+        worst = float(np.max(mags))
+        warn(
+            f"constrain_with_compensation: max |NTF zero| = {worst:.8g} > "
+            f"1 + zero_circle_margin = {1.0 + margin:.8g}. "
+            f"All g ∈ (0, 4), so the violation is caused by compensated "
+            f"a/b/c coefficient drift and cannot be corrected by g clamping. "
+            f"Consider a finer constraint or wider Q-format.",
+            stacklevel=3,
+        )
+
+    return a, g, b, c
