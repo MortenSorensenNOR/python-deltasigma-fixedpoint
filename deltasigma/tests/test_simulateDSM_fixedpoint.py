@@ -573,5 +573,159 @@ class TestZeroCircleMargin(unittest.TestCase):
             constrain_with_compensation(a, g, b, c, "CRFB", qf, "po2")
 
 
+class TestPerGroupConstraints(unittest.TestCase):
+    """Tests for per-group coefficient constraints in constrain_with_compensation.
+
+    The function accepts independent ``a_constraint``, ``b_constraint``, and
+    ``g_constraint`` parameters in addition to the primary ``c_constraint``.
+    Each group is snapped after the c-compensation state-scaling step.
+    """
+
+    OSR = 32
+
+    @classmethod
+    def setUpClass(cls):
+        H = synthesizeNTF(5, cls.OSR, 1)
+        cls.a_crfb, cls.g_crfb, cls.b_crfb, cls.c_crfb = realizeNTF(H, "CRFB")
+        cls.a_crff, cls.g_crff, cls.b_crff, cls.c_crff = realizeNTF(H, "CRFF")
+
+    def setUp(self):
+        self.qf = QFormat(signed=True, m=4, n=20)
+
+    def _is_po2(self, v):
+        if v == 0.0:
+            return True
+        k = np.log2(abs(v))
+        return abs(k - round(k)) < 1e-10
+
+    # -- a_constraint ----------------------------------------------------------
+
+    def test_a_constraint_snaps_a_to_po2(self):
+        """a_constraint='po2' forces every a_i to a power of two."""
+        a2, g2, b2, c2 = constrain_with_compensation(
+            self.a_crfb, self.g_crfb, self.b_crfb, self.c_crfb,
+            "CRFB", self.qf, a_constraint="po2"
+        )
+        for i, v in enumerate(a2):
+            self.assertTrue(self._is_po2(v),
+                msg=f"a2[{i}]={v} is not a power of 2")
+
+    def test_a_constraint_none_does_not_snap_a(self):
+        """Without a_constraint the compensated a values are general floats."""
+        a_base, _, _, _ = constrain_with_compensation(
+            self.a_crfb, self.g_crfb, self.b_crfb, self.c_crfb,
+            "CRFB", self.qf
+        )
+        a_po2, _, _, _ = constrain_with_compensation(
+            self.a_crfb, self.g_crfb, self.b_crfb, self.c_crfb,
+            "CRFB", self.qf, a_constraint="po2"
+        )
+        self.assertFalse(np.allclose(a_base, a_po2, atol=1e-10),
+            msg="a_constraint='po2' had no effect; compensated a may already be po2")
+
+    def test_a_constraint_csd2_works(self):
+        """a_constraint='csd:2' snaps each a_i to a sum of two powers of 2."""
+        a2, g2, b2, c2 = constrain_with_compensation(
+            self.a_crfb, self.g_crfb, self.b_crfb, self.c_crfb,
+            "CRFB", self.qf, a_constraint="csd:2"
+        )
+        self.assertTrue(np.all(np.isfinite(a2)))
+        a_base, _, _, _ = constrain_with_compensation(
+            self.a_crfb, self.g_crfb, self.b_crfb, self.c_crfb,
+            "CRFB", self.qf
+        )
+        self.assertFalse(np.allclose(a2, a_base, atol=1e-10),
+            msg="csd:2 a_constraint produced no change vs unconstrained")
+
+    # -- b_constraint ----------------------------------------------------------
+
+    def test_b_constraint_snaps_b_interstage_only(self):
+        """b_constraint='po2' snaps b[0..n-1] but leaves b[n] (direct feed) unchanged."""
+        a, g, b, c = self.a_crfb, self.g_crfb, self.b_crfb, self.c_crfb
+        b_n_original = float(b[-1])
+        a2, g2, b2, c2 = constrain_with_compensation(
+            a, g, b, c, "CRFB", self.qf, b_constraint="po2"
+        )
+        n = len(a)
+        for i in range(n):
+            self.assertTrue(self._is_po2(b2[i]),
+                msg=f"b2[{i}]={b2[i]} is not a power of 2 with b_constraint='po2'")
+        self.assertAlmostEqual(float(b2[n]), b_n_original, places=15,
+            msg=f"b[n] must not be snapped: before={b_n_original}, after={b2[n]}")
+
+    # -- g_constraint ----------------------------------------------------------
+
+    def test_g_constraint_snaps_g_to_po2(self):
+        """g_constraint='po2' forces every g_j to a power of two."""
+        a2, g2, b2, c2 = constrain_with_compensation(
+            self.a_crfb, self.g_crfb, self.b_crfb, self.c_crfb,
+            "CRFB", self.qf, g_constraint="po2"
+        )
+        for j, v in enumerate(g2):
+            self.assertTrue(self._is_po2(v),
+                msg=f"g2[{j}]={v} is not a power of 2")
+
+    # -- CRFF ------------------------------------------------------------------
+
+    def test_crff_a_and_b_constraints(self):
+        """CRFF: a_constraint and b_constraint snap their groups independently."""
+        a, g, b, c = self.a_crff, self.g_crff, self.b_crff, self.c_crff
+        a2, g2, b2, c2 = constrain_with_compensation(
+            a, g, b, c, "CRFF", self.qf,
+            a_constraint="po2", b_constraint="po2"
+        )
+        for i, v in enumerate(a2):
+            self.assertTrue(self._is_po2(v),
+                msg=f"CRFF a2[{i}]={v} is not a power of 2")
+        n = len(a)
+        for i in range(n):
+            self.assertTrue(self._is_po2(b2[i]),
+                msg=f"CRFF b2[{i}]={b2[i]} is not a power of 2")
+
+    # -- all groups simultaneously ---------------------------------------------
+
+    def test_all_constraints_simultaneously(self):
+        """Setting all four constraint groups at once: each group is snapped."""
+        a, g, b, c = self.a_crfb, self.g_crfb, self.b_crfb, self.c_crfb
+        a2, g2, b2, c2 = constrain_with_compensation(
+            a, g, b, c, "CRFB", self.qf,
+            c_constraint="po2",
+            a_constraint="po2",
+            b_constraint="po2",
+            g_constraint="po2",
+        )
+        n = len(a)
+        for i in range(n - 1):  # c[0..n-2] are interstage
+            self.assertTrue(self._is_po2(c2[i]),
+                msg=f"c2[{i}]={c2[i]} is not a power of 2 after c-compensation")
+        for i, v in enumerate(a2):
+            self.assertTrue(self._is_po2(v),
+                msg=f"a2[{i}]={v} is not a power of 2")
+        for j, v in enumerate(g2):
+            self.assertTrue(self._is_po2(v),
+                msg=f"g2[{j}]={v} is not a power of 2")
+        for i in range(n):
+            self.assertTrue(self._is_po2(b2[i]),
+                msg=f"b2[{i}]={b2[i]} is not a power of 2")
+
+    # -- validation ------------------------------------------------------------
+
+    def test_invalid_a_constraint_raises(self):
+        """An invalid a_constraint string raises ValueError."""
+        with self.assertRaises(ValueError):
+            constrain_with_compensation(
+                self.a_crfb, self.g_crfb, self.b_crfb, self.c_crfb,
+                "CRFB", self.qf, a_constraint="nonsense"
+            )
+
+    def test_invalid_g_constraint_raises(self):
+        """An invalid g_constraint string (csd:0 is illegal) raises ValueError."""
+        with self.assertRaises(ValueError):
+            constrain_with_compensation(
+                self.a_crfb, self.g_crfb, self.b_crfb, self.c_crfb,
+                "CRFB", self.qf, g_constraint="csd:0"
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
