@@ -1,177 +1,146 @@
-python-deltasigma
-=================
+python-deltasigma (fixed-point fork)
+====================================
 
-## Notes  
-This forked repository is maintained by **Yuki Fukuda**.  
-If you want to visit original repository,  [ggventurini/python-deltasigma](https://github.com/ggventurini/python-deltasigma).  
+A fork of [`python-deltasigma`](https://github.com/ggventurini/python-deltasigma)
+focused on **evaluating fixed-point hardware implementations** of delta-sigma
+modulators.
 
-**Today, I noified that the calcuration is sometimes incorrect in vanilla python.
-I stlongly recommend to use this library with [Anaconda](https://www.anaconda.com/).**
+The upstream package is a Python port of Richard Schreier's
+[MATLAB Delta Sigma Toolbox](http://www.mathworks.com/matlabcentral/fileexchange/19-delta-sigma-toolbox)
+and remains the place to look for the synthesis / mapping / scaling tooling.
+This fork keeps that surface intact and adds the things needed to ask *"what
+does the SNR look like once I pin every state, coefficient, and accumulator to
+a given Q-format?"*
+
+* **Origin (this fork):** [MortenSorensenNOR/python-deltasigma-fixedpoint](https://github.com/MortenSorensenNOR/python-deltasigma-fixedpoint)
+* **Direct upstream:** [hpretl/python-deltasigma](https://github.com/hpretl/python-deltasigma)
+* **Original project:** [ggventurini/python-deltasigma](https://github.com/ggventurini/python-deltasigma)
+
+[![BSD 2 clause license](http://img.shields.io/badge/license-BSD-brightgreen.png)](LICENSE)
 
 ---
 
-A port of the **MATLAB Delta Sigma Toolbox** based on free software and very little sleep
+## What this fork adds
 
+* **Fixed-point simulation backend** for `simulateDSM` — pass a
+  `FixedPointConfig` (one `QFormat` each for state, coefficients, input, and
+  the quantizer-input accumulator `y`) and the modulator inner loop runs in
+  the requested Q-format instead of `float64`. Backed by the pure-Python
+  [`fixedpoint`](https://pypi.org/project/fixedpoint/) library, so it is
+  slower than the float Cython/BLAS backends — useful for targeted
+  wordlength sweeps, not bulk Monte Carlo.
+* **Hardware-form coefficient constraints** — snap coefficients to
+  power-of-two or CSD forms with configurable margins, optionally per-group.
+* **`constrain_with_compensation`** for CRFB and CRFF — snap the interstage
+  gains `c_i` to a hardware-friendly form (po2 / CSD) while absorbing the
+  resulting state-scaling into `a`, `b`, `c`, and resonator `g` coefficients.
+  Because the snap is a similarity transform on the loop filter, the NTF
+  and STF are preserved exactly. Supports a `zero_circle_margin` to keep
+  resonator zeros away from the unit circle after compensation.
+* **Modernization** — Python 3.10+, current numpy / scipy / matplotlib,
+  `collections.abc` fixes, and removal of `np.float` / `np.int` aliases. The
+  pre-fork codebase targeted a much older stack.
 
-The **python-deltasigma** is a Python package to *synthesize, simulate, scale
-and map to implementable topologies* **delta sigma modulators**.
+### Minimal fixed-point example
 
-It aims to provide **a 1:1 Python port** of Richard Schreier's ***excellent***
-**[MATLAB Delta Sigma Toolbox](http://www.mathworks.com/matlabcentral/fileexchange/19-delta-sigma-toolbox)**,
-the *de facto* standard tool for high-level delta sigma simulation, upon which
-it is very heavily based.
+```python
+import numpy as np
+from deltasigma import synthesizeNTF, realizeNTF, mapABCD, simulateDSM
+from deltasigma import FixedPointConfig, QFormat
 
-***
+ntf = synthesizeNTF(order=3, osr=64, opt=1)
+a, g, b, c = realizeNTF(ntf, form="CRFB")
+ABCD = mapABCD(a, g, b, c, form="CRFB")
 
-**Homepage:** [python-deltasigma.io](http://python-deltasigma.io)
+# Q1.15 state and coefficients; Q3.13 on the accumulator before the quantizer.
+cfg = FixedPointConfig(
+    state=QFormat(signed=True, m=1, n=15, overflow="clamp", rounding="convergent"),
+    coeff=QFormat(signed=True, m=1, n=15, overflow="clamp", rounding="convergent"),
+    input=QFormat(signed=True, m=1, n=15, overflow="clamp", rounding="convergent"),
+    y=QFormat(signed=True, m=3, n=13, overflow="clamp", rounding="convergent"),
+)
 
-**Documentation:** [docs.python-deltasigma.io](http://docs.python-deltasigma.io)
+N = 8192
+u = 0.5 * np.sin(2 * np.pi * 5 / N * np.arange(N))
+v, xn, xmax, y = simulateDSM(u, ABCD, fixedpoint=cfg)
+```
 
-**Original Latest version:** [0.2](https://pypi.python.org/pypi/deltasigma/)
-
-**Forked Latest version:** [0.2.7](https://github.com/Y-F-Acoustics/python-deltasigma)
-
-[![Python Package using Conda](https://github.com/Y-F-Acoustics/python-deltasigma/actions/workflows/python-package-conda.yml/badge.svg)](https://github.com/Y-F-Acoustics/python-deltasigma/actions/workflows/python-package-conda.yml)
-[![Python package](https://github.com/Y-F-Acoustics/python-deltasigma/actions/workflows/python-package.yml/badge.svg)](https://github.com/Y-F-Acoustics/python-deltasigma/actions/workflows/python-package.yml)
-[![Build Status](https://travis-ci.org/Y-F-Acoustics/python-deltasigma.svg?branch=master)](https://travis-ci.org/Y-F-Acoustics/python-deltasigma)
-[![Coverage Status](https://coveralls.io/repos/github/Y-F-Acoustics/python-deltasigma/badge.svg?branch=master)](https://coveralls.io/github/Y-F-Acoustics/python-deltasigma?branch=master)
-[![BSD 2 clause license](http://img.shields.io/badge/license-BSD-brightgreen.png)](https://raw.githubusercontent.com/ggventurini/python-deltasigma/master/LICENSE)
-
-
-***
+Omitting `fixedpoint=` falls back to the unmodified float backends, so any
+existing upstream script keeps working unchanged.
 
 ## Status
 
-The fundamental functionality is available and working.
+Upstream's fundamental functionality is intact (synthesis, realization,
+scaling, simulation). The fixed-point backend and coefficient-constraint
+utilities added in this fork are usable but newer — see the test suite
+(`deltasigma/tests/test_simulateDSM_fixedpoint.py`,
+`test_constrain_with_compensation.py`) for what is currently covered.
 
-Secondary features such as "native" quadrature modulator support,
-PIS calculation or ESL are still work in progress. A list of functions
-and files is included in [files.csv](https://github.com/ggventurini/python-deltasigma/blob/master/files.csv),
-updated with the current status.
-
-Further functionality is expected to be completed in the next versions
-according to
-[the ROADMAP](https://github.com/ggventurini/python-deltasigma/blob/master/ROADMAP.md).
+Upstream's secondary features (native quadrature modulator support, PIS, ESL)
+are still incomplete; this fork does not address them. The upstream
+[ROADMAP](https://github.com/ggventurini/python-deltasigma/blob/master/ROADMAP.md)
+and [files.csv](files.csv) still describe their state.
 
 ## Install
 
-`python-deltasigma` runs on Linux, Mac OS X and Windows.
+Runs on Linux, macOS, and Windows. Requires Python 3.10+, recent numpy,
+scipy, and matplotlib; the fixed-point backend additionally requires
+[`fixedpoint`](https://pypi.org/project/fixedpoint/). **Cython** is strongly
+recommended for the float backends — it gives ~100x faster simulations.
 
-Installing requires **Python 3.7+**, **numpy**(<= 1.20.3), **scipy**
-(<= 1.7.1) and **matplotlib**.  
+The supported install path is [uv](https://docs.astral.sh/uv/):
 
-Strongly recommended: **Cython** - for significantly faster delta sigma modulator simulations. 
+    uv pip install -e .
 
-They are packaged by virtually all
-the major Linux distributions.
+or, inside a checkout, drop into a uv-managed venv:
 
-I do not run Windows, so I can't really provide more info (sorry), except
-that people tell me they manage to have a working setup.
+    uv venv
+    uv pip install -e .
 
-When the dependencies are satisfied, run:
+Plain `pip` works too if your environment is not PEP-668-managed.
 
-    pip install deltasigma
+The unmodified upstream package is still available from PyPI as
+`deltasigma` (`pip install deltasigma`) but does not include the fixed-point
+additions in this fork.
 
-to install the latest [original stable version](https://github.com/ggventurini/python-deltasigma) from the [Python
-Package Index (PYPI)](http://pypi.python.org), or:
+### Testing
 
-    python setup.py install
+The test suite uses `pytest`:
 
-if you're installing a development version from Git.
-
-### Extras
-
-Install the **[sphinx](http://sphinx-doc.org/)** package to build the
-documentation yourself.
-
-The test suite requires
-**[setuptools](https://pypi.python.org/pypi/setuptools)**,
-used to access the reference function outputs.
-
-Testing can be automated with
-**[nose](https://pypi.python.org/pypi/nose/)**, issuing:
-
-    nosetests -v deltasigma
+    uv run pytest deltasigma
 
 ## Documentation
 
-
-In addition to the notebooks found in the `examples/` directory,
-ported from the MATLAB Delta Sigma toolbox:
-
-1. You can find the included
-   [package documentation online](http://python-deltasigma.readthedocs.org/en/latest/).
-
-2. The original MATLAB Toolbox provides in-depth documentation, which
-   is very useful to understand what the toolbox is capable of. See
-   [DSToolbox.pdf](https://github.com/ggventurini/python-deltasigma/blob/master/delsig/DSToolbox.pdf?raw=true)
-   and [OnePageStory.pdf](https://github.com/ggventurini/python-deltasigma/blob/master/delsig/OnePageStory.pdf?raw=true)
-   (*PDF warning*).
-
-3. The book:
-
-    Richard Schreier, Gabor C. Temes, *Understanding Delta-Sigma Data Converters*,
-    ISBN: 978-0-471-46585-0, November 2004, Wiley-IEEE Press
-
-    is probably *the most authoritative resource on the topic*. Chapter 8-9 show
-    how to use the MATLAB toolkit and the observations apply also to this Python
-    port. Links
-    [on amazon](http://www.amazon.com/Understanding-Delta-Sigma-Converters-Richard-Schreier/dp/0471465852),
-    [on the Wiley-IEEE press](http://eu.wiley.com/WileyCDA/WileyTitle/productCd-0471465852,miniSiteCd-IEEE2.html).
-
-    *I am not affiliated with neither the sellers nor the authors.*
-
-## How to contribute
-
-I write this software in my free time, this is not funded research.
-
-If you find this package useful, you are welcome to freely contribute
-to its development in one of the following ways.
-
-### Send a pull request my way
-
-Pull requests are most gladly received!
-
-There are only a few *guidelines*, which can be overridden every time
-it is reasonable to do so:
-
-* Please try to follow `PEP8`.
-
-* Try to keep the functions signature identical. Parameters with
-  `NaN`/`[]` as default values have their default value replaced with
-  `None`.
-
-* If a function has a varible number of return values, its Python port
-  should implement the maximum number of return values.
-
-### Support python-deltasigma with a donation
-
-*I do not want your money.* I develop this software because I enjoy it and
-because I use it myself.
-
-If you wish to support the development of `python-deltasigma` and you wish
-to contribute monetarily, ***please donate to cancer research instead:***
-
-* **[Association for International Cancer Research *(eng)*](http://www.aicr.org.uk/donate.aspx)**,
-  or
-* **[Fond. IRCCS Istituto Nazionale dei Tumori *(it)*](http://www.istitutotumori.mi.it/modules.php?name=Content&pa=showpage&pid=24)**.
-
-Consider [sending me a mail](http://tinymailto.com/5310) afterwards, ***it
-makes for great motivation!***
-
+* Upstream [package documentation](http://python-deltasigma.readthedocs.org/en/latest/)
+  covers the synthesis / mapping / scaling APIs.
+* The original MATLAB toolbox documentation is the deepest reference —
+  see [DSToolbox.pdf](delsig/DSToolbox.pdf) and
+  [OnePageStory.pdf](delsig/OnePageStory.pdf).
+* Richard Schreier and Gabor C. Temes, *Understanding Delta-Sigma Data
+  Converters*, Wiley-IEEE Press, 2004 (ISBN 978-0-471-46585-0) — chapters
+  8–9 walk through the MATLAB toolbox, and the same observations apply
+  here.
+* The new fixed-point and coefficient-constraint modules document their
+  semantics in module-level docstrings:
+  `deltasigma/_fixedpoint_config.py`,
+  `deltasigma/_simulateDSM_fixedpoint.py`,
+  `deltasigma/_constrain_compensation.py`,
+  `deltasigma/_fixedpoint_constraints.py`.
 
 ## Licensing and copyright notice
 
-All original MATLAB code is Copyright (c) 2009, Richard Schreier.
-See the LICENSE file for the licensing terms.
-
-The Python code here provided is a derivative work from the above toolkit and
-subject to the same license terms.
+All original MATLAB code is Copyright (c) 2009, Richard Schreier. The Python
+port is a derivative work distributed under the same license terms (BSD
+2-Clause); see the `LICENSE` file.
 
 This package contains some source code from `pydsm`, also based on the same
 MATLAB toolbox. The `pydsm` package is copyright (c) 2012, Sergio Callegari.
 
-When not otherwise specified, the Python code is Copyright 2013, Giuseppe
-Venturini and the python-deltasigma contributors.
+When not otherwise specified, the upstream Python code is Copyright 2013,
+Giuseppe Venturini and the python-deltasigma contributors.
+
+The fixed-point simulation backend and coefficient-constraint utilities
+added in this fork are Copyright (c) 2026, Morten Sørensen, and are
+distributed under the same BSD 2-Clause terms as the rest of the project.
 
 MATLAB is a registered trademark of The MathWorks, Inc.
