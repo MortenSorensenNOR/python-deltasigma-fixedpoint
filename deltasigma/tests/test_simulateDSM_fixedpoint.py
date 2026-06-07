@@ -2,6 +2,14 @@
 # test_simulateDSM_fixedpoint.py
 # Tests for the fixed-point simulation backend.
 # This file is part of python-deltasigma.
+#
+# Copyright (c) 2026, Morten Sørensen
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# python-deltasigma is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# LICENSE file for the licensing terms.
 
 """Tests for ``simulateDSM`` with a ``FixedPointConfig`` argument."""
 
