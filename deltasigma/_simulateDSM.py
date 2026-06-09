@@ -210,9 +210,13 @@ def simulateDSM(u, arg2, nlev=2, x0=0., fixedpoint=None):
     """
     global warned
     if fixedpoint is not None:
-        from ._simulateDSM_fixedpoint import simulateDSM as _simulateDSM_fixedpoint
-        return _simulateDSM_fixedpoint(u, arg2, nlev=nlev, x0=x0,
-                                       fixedpoint=fixedpoint)
+        try:
+            from ._simulateDSM_fixedpoint_cpython import simulateDSM as _fp_c
+            return _fp_c(u, arg2, nlev=nlev, x0=x0, fixedpoint=fixedpoint)
+        except ImportError:
+            from ._simulateDSM_fixedpoint import simulateDSM as _simulateDSM_fixedpoint
+            return _simulateDSM_fixedpoint(u, arg2, nlev=nlev, x0=x0,
+                                           fixedpoint=fixedpoint)
     if _simulateDSM_cblas or _simulateDSM_scipy_blas:
         if not _is_zpk(arg2) and not isinstance(arg2, np.ndarray):
             arg2 = _get_zpk(arg2)

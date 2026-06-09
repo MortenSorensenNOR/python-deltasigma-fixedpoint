@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 
 import os
-from setuptools import setup, find_packages
+import numpy as np
+from setuptools import setup, find_packages, Extension
 __version__ = "0.2.6"
 
 def read(fname):
@@ -11,8 +12,16 @@ def read(fname):
     except IOError:
         return ""
 
+_fpcore_ext = Extension(
+    "deltasigma._simulateDSM_fpcore",
+    sources=["deltasigma/_simulateDSM_fpcore.c"],
+    include_dirs=[np.get_include()],
+    extra_compile_args=["-O3", "-std=c99"],
+)
+
 setup(
     name='deltasigma',
+    ext_modules=[_fpcore_ext],
     version=__version__,
     packages=find_packages(exclude=['beta']),
     package_data={
